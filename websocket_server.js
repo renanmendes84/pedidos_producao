@@ -4,7 +4,7 @@ const mysql = require('mysql2/promise');
 
 // Configuração do MySQL
 const dbConfig = {
-    host: 'localhost',      // Se o MySQL estiver no mesmo Render, troque para '127.0.0.1'
+    host: '127.0.0.1',      // Se o MySQL estiver no mesmo Render, troque para '127.0.0.1'
     user: 'root',
     password: '',           // Sua senha
     database: 'controle_tecnicos'
@@ -73,3 +73,4 @@ wss.on('connection', ws => {
     ws.on('close', () => console.log('Cliente desconectado'));
     ws.on('error', err => console.error('WebSocket erro:', err));
 });
+
