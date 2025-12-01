@@ -1,5 +1,5 @@
 const WebSocket = require('ws');
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
 // Conexão com MySQL local
 const db = mysql.createConnection({
@@ -76,4 +76,5 @@ wss.on('connection', ws => {
     clearInterval(interval);
   });
 });
+
 
