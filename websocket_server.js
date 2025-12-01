@@ -3,7 +3,7 @@ const mysql = require('mysql');
 
 // Conexão com MySQL local
 const db = mysql.createConnection({
-  host: '127.0.0.1',   // localhost
+  host: '192.168.100.21',   // localhost
   user: 'root',        // seu usuário MySQL
   password: '',        // sua senha MySQL
   database: 'controle_tecnicos',
@@ -76,3 +76,4 @@ wss.on('connection', ws => {
     clearInterval(interval);
   });
 });
+
