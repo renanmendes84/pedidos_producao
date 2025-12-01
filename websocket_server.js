@@ -1,76 +1,78 @@
-// websocket_server.js
 const WebSocket = require('ws');
-const mysql = require('mysql2/promise');
+const mysql = require('mysql');
 
-// Configuração do MySQL
-const dbConfig = {
-    host: '127.0.0.1',      // Se o MySQL estiver no mesmo Render, troque para '127.0.0.1'
-    user: 'root',
-    password: '',           // Sua senha
-    database: 'controle_tecnicos'
-};
-
-// Porta do WebSocket (Render define automaticamente PORT)
-const PORT = process.env.PORT || 8080;
-
-// Criar servidor WebSocket
-const wss = new WebSocket.Server({ port: PORT }, () => {
-    console.log(`WebSocket rodando na porta ${PORT}`);
+// Conexão com MySQL local
+const db = mysql.createConnection({
+  host: '127.0.0.1',   // localhost
+  user: 'root',        // seu usuário MySQL
+  password: '',        // sua senha MySQL
+  database: 'controle_tecnicos',
+  port: 3306
 });
 
-// Função para buscar pedidos do banco
-async function buscarPedidos() {
-    const connection = await mysql.createConnection(dbConfig);
+// Testa a conexão
+db.connect(err => {
+  if(err){
+    console.error('Erro ao conectar no MySQL:', err);
+    process.exit(1);
+  } else {
+    console.log('Conectado ao MySQL com sucesso!');
+  }
+});
 
-    // PEDIDOS EM PRODUÇÃO
-    const [producao] = await connection.execute(`
-        SELECT pp.id, pp.cliente, pp.data_pedido, 
-               COUNT(pi.id) AS itens_total, 
-               SUM(CASE WHEN pi.status='finalizado' THEN 1 ELSE 0 END) AS itens_ok
-        FROM producao_pedidos pp
-        LEFT JOIN producao_itens pi ON pi.pedido_id = pp.id
-        WHERE pp.status='em_producao'
-        GROUP BY pp.id
-        ORDER BY pp.data_pedido ASC
-    `);
+// Cria WebSocket server
+const wss = new WebSocket.Server({ port: 8080 }, () => {
+  console.log('WebSocket rodando em ws://localhost:8080');
+});
 
-    // PEDIDOS FINALIZADOS
-    const [finalizados] = await connection.execute(`
-        SELECT pp.id, pp.cliente, pp.data_finalizado, 
-               SUM(pi.quantidade) AS total_maq
-        FROM producao_pedidos pp
-        LEFT JOIN producao_itens pi ON pi.pedido_id = pp.id
-        WHERE pp.status='finalizado'
-        GROUP BY pp.id
-        ORDER BY pp.data_finalizado DESC
-    `);
+// Função para buscar pedidos
+function buscarPedidos(callback){
+  let pedidos = { producao: [], finalizados: [] };
 
-    await connection.end();
-    return { producao, finalizados };
-}
+  // Pedidos em produção
+  db.query(`
+    SELECT pp.*, 
+           COUNT(pi.id) AS itens_total,
+           SUM(CASE WHEN pi.status = 'finalizado' THEN 1 ELSE 0 END) AS itens_ok,
+           SUM(pi.quantidade) AS total_maq
+    FROM producao_pedidos pp
+    LEFT JOIN producao_itens pi ON pi.pedido_id = pp.id
+    WHERE pp.status = 'em_producao'
+    GROUP BY pp.id
+    ORDER BY pp.data_pedido ASC
+  `, (err, results) => {
+    if(err) console.error(err);
+    pedidos.producao = results;
 
-// Envia pedidos para todos os clientes conectados
-async function enviarPedidos() {
-    const dados = await buscarPedidos();
-    const mensagem = JSON.stringify(dados);
-
-    wss.clients.forEach(client => {
-        if(client.readyState === WebSocket.OPEN){
-            client.send(mensagem);
-        }
+    // Pedidos finalizados
+    db.query(`
+      SELECT pp.*, SUM(pi.quantidade) AS total_maq
+      FROM producao_pedidos pp
+      LEFT JOIN producao_itens pi ON pi.pedido_id = pp.id
+      WHERE pp.status = 'finalizado'
+      GROUP BY pp.id
+      ORDER BY pp.data_finalizado DESC
+    `, (err2, results2) => {
+      if(err2) console.error(err2);
+      pedidos.finalizados = results2;
+      callback(pedidos);
     });
+  });
 }
 
-// Atualiza os clientes a cada 5 segundos
-setInterval(enviarPedidos, 5000);
-
-// Evento de conexão
+// Quando um cliente conecta
 wss.on('connection', ws => {
-    console.log('Novo cliente conectado');
-    // Enviar pedidos imediatamente ao conectar
-    enviarPedidos();
+  console.log('Cliente conectado');
 
-    ws.on('close', () => console.log('Cliente desconectado'));
-    ws.on('error', err => console.error('WebSocket erro:', err));
+  // Envia pedidos a cada 5s
+  const interval = setInterval(() => {
+    buscarPedidos(data => {
+      ws.send(JSON.stringify(data));
+    });
+  }, 5000);
+
+  ws.on('close', () => {
+    console.log('Cliente desconectado');
+    clearInterval(interval);
+  });
 });
-
