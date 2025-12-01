@@ -1,53 +1,50 @@
-const WebSocket = require("ws");
-const http = require("http");
+// websocket_server.js
+const http = require('http');
+const WebSocket = require('ws');
 
-// Porta do WebSocket (Render define process.env.PORT)
+// Usa a porta definida pelo Render ou 8080 como fallback
 const PORT = process.env.PORT || 8080;
-const API_PORT = process.env.API_PORT || 3000;
 
-const wss = new WebSocket.Server({ port: PORT });
-
-let clients = [];
-
-console.log("🚀 WebSocket ativo na porta:", PORT);
-
-wss.on("connection", ws => {
-    console.log("📡 Cliente conectado!");
-    clients.push(ws);
-
-    ws.on("close", () => {
-        clients = clients.filter(c => c !== ws);
-        console.log("❌ Cliente desconectado");
-    });
+// Cria um servidor HTTP simples (necessário para WebSocket no Render)
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Servidor WebSocket rodando!');
 });
 
-// Broadcast para todos os clientes conectados
-function broadcast(data) {
-    clients.forEach(ws => {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(data));
-        }
+// Cria o servidor WebSocket
+const wss = new WebSocket.Server({ server });
+
+// Array para manter todos os clientes conectados
+const clients = [];
+
+wss.on('connection', (ws) => {
+  console.log('Novo cliente conectado!');
+  clients.push(ws);
+
+  ws.on('message', (message) => {
+    console.log('Mensagem recebida:', message);
+
+    // Envia a mensagem para todos os clientes conectados
+    clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
     });
-}
+  });
 
-// Servidor HTTP para receber notificações do PHP
-http.createServer((req, res) => {
-    if (req.method === "POST") {
-        let body = "";
-        req.on("data", chunk => body += chunk);
-        req.on("end", () => {
-            try {
-                console.log("🔥 Atualização recebida:", body);
-                const dados = JSON.parse(body);
-                broadcast(dados);
-            } catch (e) {
-                console.log("❌ Erro ao processar dados:", e);
-            }
-        });
-    }
+  ws.on('close', () => {
+    console.log('Cliente desconectado');
+    // Remove o cliente da lista
+    const index = clients.indexOf(ws);
+    if (index > -1) clients.splice(index, 1);
+  });
 
-    res.writeHead(200);
-    res.end("OK");
-}).listen(API_PORT, () => {
-    console.log("🌐 API HTTP para PHP rodando na porta:", API_PORT);
+  ws.on('error', (err) => {
+    console.error('Erro no WebSocket:', err);
+  });
+});
+
+// Inicia o servidor HTTP + WebSocket
+server.listen(PORT, () => {
+  console.log(`Servidor WebSocket rodando em https://localhost:${PORT} (Render ajusta automaticamente)`);
 });
