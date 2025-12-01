@@ -1,50 +1,75 @@
 // websocket_server.js
-const http = require('http');
 const WebSocket = require('ws');
+const mysql = require('mysql2/promise');
 
-// Usa a porta definida pelo Render ou 8080 como fallback
+// Configuração do MySQL
+const dbConfig = {
+    host: 'localhost',      // Se o MySQL estiver no mesmo Render, troque para '127.0.0.1'
+    user: 'root',
+    password: '',           // Sua senha
+    database: 'controle_tecnicos'
+};
+
+// Porta do WebSocket (Render define automaticamente PORT)
 const PORT = process.env.PORT || 8080;
 
-// Cria um servidor HTTP simples (necessário para WebSocket no Render)
-const server = http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('Servidor WebSocket rodando!');
+// Criar servidor WebSocket
+const wss = new WebSocket.Server({ port: PORT }, () => {
+    console.log(`WebSocket rodando na porta ${PORT}`);
 });
 
-// Cria o servidor WebSocket
-const wss = new WebSocket.Server({ server });
+// Função para buscar pedidos do banco
+async function buscarPedidos() {
+    const connection = await mysql.createConnection(dbConfig);
 
-// Array para manter todos os clientes conectados
-const clients = [];
+    // PEDIDOS EM PRODUÇÃO
+    const [producao] = await connection.execute(`
+        SELECT pp.id, pp.cliente, pp.data_pedido, 
+               COUNT(pi.id) AS itens_total, 
+               SUM(CASE WHEN pi.status='finalizado' THEN 1 ELSE 0 END) AS itens_ok
+        FROM producao_pedidos pp
+        LEFT JOIN producao_itens pi ON pi.pedido_id = pp.id
+        WHERE pp.status='em_producao'
+        GROUP BY pp.id
+        ORDER BY pp.data_pedido ASC
+    `);
 
-wss.on('connection', (ws) => {
-  console.log('Novo cliente conectado!');
-  clients.push(ws);
+    // PEDIDOS FINALIZADOS
+    const [finalizados] = await connection.execute(`
+        SELECT pp.id, pp.cliente, pp.data_finalizado, 
+               SUM(pi.quantidade) AS total_maq
+        FROM producao_pedidos pp
+        LEFT JOIN producao_itens pi ON pi.pedido_id = pp.id
+        WHERE pp.status='finalizado'
+        GROUP BY pp.id
+        ORDER BY pp.data_finalizado DESC
+    `);
 
-  ws.on('message', (message) => {
-    console.log('Mensagem recebida:', message);
+    await connection.end();
+    return { producao, finalizados };
+}
 
-    // Envia a mensagem para todos os clientes conectados
-    clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
+// Envia pedidos para todos os clientes conectados
+async function enviarPedidos() {
+    const dados = await buscarPedidos();
+    const mensagem = JSON.stringify(dados);
+
+    wss.clients.forEach(client => {
+        if(client.readyState === WebSocket.OPEN){
+            client.send(mensagem);
+        }
     });
-  });
+}
 
-  ws.on('close', () => {
-    console.log('Cliente desconectado');
-    // Remove o cliente da lista
-    const index = clients.indexOf(ws);
-    if (index > -1) clients.splice(index, 1);
-  });
+// Atualiza os clientes a cada 5 segundos
+setInterval(enviarPedidos, 5000);
 
-  ws.on('error', (err) => {
-    console.error('Erro no WebSocket:', err);
-  });
-});
+// Evento de conexão
+wss.on('connection', ws => {
+    console.log('Novo cliente conectado');
+    // Enviar pedidos imediatamente ao conectar
+    enviarPedidos();
 
-// Inicia o servidor HTTP + WebSocket
-server.listen(PORT, () => {
-  console.log(`Servidor WebSocket rodando em https://localhost:${PORT} (Render ajusta automaticamente)`);
+    ws.on('close', () => console.log('Cliente desconectado'));
+    ws.on('error', err => console.error('WebSocket erro:', err));
 });
